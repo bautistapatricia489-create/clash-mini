@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Clash Royale Mini</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body {
+      background: #090d16;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #game-container {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+      height: 100vh;
+      max-height: 750px;
+      background: #0f172a;
+      border: 2px solid #334155;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="game-container">
+  <canvas id="gameCanvas"></canvas>
+</div>
+
+<script>
+  // --- TODAS LAS CARTAS DISPONIBLES CON HABALIDADES Y EVOLUCIONES ---
+  const ALL_CARDS = [
+    { id: 'KNIGHT', name: 'Caballero', cost: 3, icon: '🛡️', color: '#3b82f6', hp: 750, damage: 90, speed: 1.1, range: 20, type: 'TROOP', targets: 'GROUND', count: 1, desc: 'Guerrero equilibrado.' },
+    { id: 'ARCHERS', name: 'Arqueras', cost: 3, icon: '🏹', color: '#ec4899', hp: 220, damage: 50, speed: 1.3, range: 110, type: 'TROOP', targets: 'ANY', count: 2, desc: 'Par de tiradoras.' },
+    { id: 'HOG_RIDER', name: 'Montapuercos', cost: 4, icon: '🐗', color: '#d97706', hp: 1150, damage: 170, speed: 1.7, range: 25, type: 'TROOP', targets: 'BUILDINGS', count: 1, desc: 'Salta directo a estructuras.' },
+    { id: 'TESLA', name: 'Torre Tesla', cost: 4, icon: '⚡', color: '#0284c7', hp: 950, damage: 110, range: 125, type: 'BUILDING', targets: 'ANY', desc: 'Defensa defensiva eléctrica.' },
+    { id: 'GIANT', name: 'Gigante', cost: 5, icon: '🧱', color: '#f59e0b', hp: 1900, damage: 130, speed: 0.6, range: 25, type: 'TROOP', targets: 'BUILDINGS', count: 1, desc: 'Tanque exclusivo de torres.' },
+    { id: 'FIREBALL', name: 'B. Fuego', cost: 4, icon: '🔥', color: '#ef4444', damage: 340, radius: 55, type: 'SPELL', desc: 'Daño de área masivo.' },
+    { id: 'EVO_KNIGHT', name: 'Caballero Evo', cost: 4, icon: '✨🛡️', color: '#eab308', hp: 1200, damage: 140, speed: 1.3, range: 20, type: 'TROOP', targets: 'GROUND', count: 1, isEvo: true, desc: 'Posee Escudo Protector (-40% daño).' },
+    { id: 'EVO_ARCHERS', name: 'Arqueras Evo', cost: 4, icon: '✨🏹', color: '#f43f5e', hp: 380, damage: 85, speed: 1.4, range: 145, type: 'TROOP', targets: 'ANY', count: 2, isEvo: true, desc: 'Ataque múltiple penetrante.' },
+    { id: 'PEKKA', name: 'P.E.K.K.A', cost: 7, icon: '🤖', color: '#8b5cf6', hp: 2400, damage: 450, speed: 0.5, range: 25, type: 'TROOP', targets: 'GROUND', count: 1, isChamp: true, abilityName: 'Furia PEKKA', desc: 'Habilidad: Onda expansiva y furia.' },
+    { id: 'E_WIZARD', name: 'Mago Elec.', cost: 4, icon: '⚡', color: '#06b6d4', hp: 480, damage: 75, speed: 1.2, range: 105, type: 'TROOP', targets: 'ANY', count: 1, isChamp: true, abilityName: 'Sobrecarga', stun: 0.4, desc: 'Habilidad: Descarga global aturdidora.' },
+    { id: 'MINIONS', name: 'Esbirros', cost: 3, icon: '🦇', color: '#6366f1', hp: 180, damage: 55, speed: 1.4, range: 25, type: 'TROOP', targets: 'ANY', count: 3, isFlying: true, desc: 'Trío de tropas voladoras.' },
+    { id: 'ZAP', name: 'Zap', cost: 2, icon: '🌩️', color: '#38bdf8', damage: 150, radius: 45, type: 'SPELL', stun: 0.5, desc: 'Descarga eléctrica ligera.' }
+  ];
+
+  // TODAS LAS CARTAS DESBLOQUEADAS POR DEFECTO
+  const ALL_CARD_IDS = ALL_CARDS.map(c => c.id);
+
+  // --- AUDIO SINTETIZADO ---
+  let audioCtx = null;
+  let soundOn = true;
+  function initAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  }
+  function playSound(type) {
+    if (!soundOn || !audioCtx) return;
+    try {
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+
+      if (type === 'spawn') {
+        osc.frequency.setValueAtTime(220, now);
+        osc.frequency.exponentialRampToValueAtTime(520, now + 0.1);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      } else if (type === 'hit') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(140, now);
+        osc.frequency.exponentialRampToValueAtTime(30, now + 0.08);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+      } else if (type === 'ability') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(900, now + 0.3);
+        gain.gain.setValueAtTime(0.35, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      } else if (type === 'spell') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.linearRampToValueAtTime(120, now + 0.25);
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+      } else if (type === 'chest') {
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.exponentialRampToValueAtTime(850, now + 0.3);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      } else if (type === 'win') {
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.setValueAtTime(450, now + 0.15);
+        osc.frequency.setValueAtTime(600, now + 0.3);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+      }
+      osc.start(now); osc.stop(now + 0.5);
+    } catch(e){}
+  }
+
+  // --- PERSISTENCIA & ESTADO GLOBAL ---
+  let user = {
+    trophies: parseInt(localStorage.getItem('crm_trophies') || '0'),
+    coins: parseInt(localStorage.getItem('crm_coins') || '1000'),
+    gems: parseInt(localStorage.getItem('crm_gems') || '100'),
+    deck: JSON.parse(localStorage.getItem('crm_deck') || '["KNIGHT","ARCHERS","PEKKA","E_WIZARD"]'),
+    unlocked: ALL_CARD_IDS, // TODAS DESBLOQUEADAS Y DISPONIBLES
+    chests: JSON.parse(localStorage.getItem('crm_chests') || '[{"type":"Oro","ready":true},{"type":"Plata","ready":true},null,null]')
+  };
+
+  function saveData() {
+    localStorage.setItem('crm_trophies', user.trophies);
+    localStorage.setItem('crm_coins', user.coins);
+    localStorage.setItem('crm_gems', user.gems);
+    localStorage.setItem('crm_deck', JSON.stringify(user.deck));
+    localStorage.setItem('crm_chests', JSON.stringify(user.chests));
+  }
+
+  // --- CANVAS & MOTOR ENGINE ---
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const VW = 360, VH = 640;
+  let scale = 1;
+
+  let currentTab = 'BATTLE'; 
+  let mode = 'MENU';
+  
+  let matchTimer = 180;
+  let playerElixir = 5;
+  let botElixir = 5;
+  let selectedCardId = null;
+  let entities = [];
+  let botTimer = 0;
+  let matchResult = null;
+
+  function resize() {
+    const p = canvas.parentElement;
+    canvas.width = p.clientWidth;
+    canvas.height = p.clientHeight;
+    scale = canvas.width / VW;
+  }
+  window.addEventListener('resize', resize);
+  window.onload = () => {
+    resize();
+    setupInput();
+    renderLoop();
+  };
+
+  // --- CONTROLES Y CLICS ---
+  function setupInput() {
+    const handleTap = (clientX, clientY) => {
+      initAudio();
+      const rect = canvas.getBoundingClientRect();
+      const x = (clientX - rect.left) / scale;
+      const y = (clientY - rect.top) / scale;
+
+      // Silenciar Audio
+      if (x > 320 && y < 40) {
+        soundOn = !soundOn;
+        return;
+      }
+
+      if (mode === 'MENU') {
+        // Pestañas
+        if (y > VH - 50) {
+          if (x < 120) currentTab = 'DECK';
+          else if (x < 240) currentTab = 'BATTLE';
+          else currentTab = 'CHESTS';
+          return;
+        }
+
+        if (currentTab === 'BATTLE') {
+          if (x >= 90 && x <= 270 && y >= 320 && y <= 375) {
+            startBattle();
+          }
+        } else if (currentTab === 'CHESTS') {
+          for (let i = 0; i < 4; i++) {
+            const cx = 50 + (i % 2) * 140;
+            const cy = 140 + Math.floor(i / 2) * 150;
+            if (x >= cx && x <= cx + 120 && y >= cy && y <= cy + 130) {
+              openChest(i);
+            }
+          }
+        } else if (currentTab === 'DECK') {
+          let idx = 0;
+          ALL_CARDS.forEach(c => {
+            const cardX = 25 + (idx % 2) * 160;
+            const cardY = 120 + Math.floor(idx / 2) * 75;
+            if (x >= cardX && x <= cardX + 150 && y >= cardY && y <= cardY + 68) {
+              // EQUIPAR / DESEQUIPAR AL INSTANTE CON 1 SOLO CLIC
+              if (user.deck.includes(c.id)) {
+                if (user.deck.length > 1) {
+                  user.deck = user.deck.filter(id => id !== c.id);
+                }
+              } else {
+                if (user.deck.length >= 4) {
+                  user.deck.shift(); // Remueve la primera si ya hay 4 para meter la nueva
+                }
+                user.deck.push(c.id);
+              }
+              playSound('spawn');
+              saveData();
+            }
+            idx++;
+          });
+        }
+      } else if (mode === 'PLAYING') {
+        // Botón Habilidad Campeón
+        const champ = entities.find(e => e.team === 'PLAYER' && e.isChamp && e.hp > 0);
+        if (champ && x >= VW - 105 && y >= 455 && x <= VW - 10 && y <= 495) {
+          useChampionAbility(champ);
+          return;
+        }
+
+        // Selección de Carta en la barra
+        if (y >= 530) {
+          const handCards = user.deck.map(id => ALL_CARDS.find(c => c.id === id));
+          const slotW = VW / Math.max(1, handCards.length);
+          const index = Math.floor(x / slotW);
+          if (handCards[index]) {
+            if (playerElixir >= handCards[index].cost) {
+              selectedCardId = selectedCardId === handCards[index].id ? null : handCards[index].id;
+            }
+          }
+          return;
+        }
+
+        // Invocación en arena
+        if (selectedCardId && y < 530) {
+          const card = ALL_CARDS.find(c => c.id === selectedCardId);
+          if (card.type !== 'SPELL' && y < 270) return; 
+
+          if (playerElixir >= card.cost) {
+            playerElixir -= card.cost;
+            spawnCard(card, x, y, 'PLAYER');
+            selectedCardId = null;
+          }
+        }
+      } else if (mode === 'GAMEOVER') {
+        if (x >= 110 && x <= 250 && y >= 360 && y <= 400) {
+          mode = 'MENU';
+        }
+      }
+    };
+
+    canvas.addEventListener('click', e => handleTap(e.clientX, e.clientY));
+    canvas.addEventListener('touchstart', e => {
+      e.preventDefault();
+      if (e.touches.length > 0) handleTap(e.touches[0].clientX, e.touches[0].clientY);
+    });
+  }
+
+  // --- LÓGICA DE COFRES ---
+  function openChest(slotIndex) {
+    const ch = user.chests[slotIndex];
+    if (!ch) return;
+
+    playSound('chest');
+    const goldEarned = ch.type === 'Oro' ? 180 : 75;
+    const gemsEarned = ch.type === 'Oro' ? 12 : 4;
+
+    user.coins += goldEarned;
+    user.gems += gemsEarned;
+    user.chests[slotIndex] = null;
+    saveData();
+    alert(`¡Cofre de ${ch.type} abierto!\n+${goldEarned} Monedas\n+${gemsEarned} Gemas`);
+  }
+
+  // --- BATALLA ---
+  function startBattle() {
+    if (user.deck.length === 0) {
+      alert("¡Equipa al menos 1 carta en tu mazo!");
+      return;
+    }
+    mode = 'PLAYING';
+    matchTimer = 180;
+    playerElixir = 5;
+    botElixir = 5;
+    selectedCardId = null;
+    entities = [];
+    botTimer = 0;
+
+    // Torres Jugador (Azul)
+    entities.push(createTower(80, 440, 'PLAYER', 'PRINCESS', 1300, 70, 110));
+    entities.push(createTower(280, 440, 'PLAYER', 'PRINCESS', 1300, 70, 110));
+    entities.push(createTower(180, 490, 'PLAYER', 'KING', 2200, 85, 120));
+
+    // Torres Bot (Rojo)
+    entities.push(createTower(80, 100, 'BOT', 'PRINCESS', 1300, 70, 110));
+    entities.push(createTower(280, 100, 'BOT', 'PRINCESS', 1300, 70, 110));
+    entities.push(createTower(180, 50, 'BOT', 'KING', 2200, 85, 120));
+  }
+
+  function createTower(x, y, team, type, hp, damage, range) {
+    return {
+      id: Math.random(), type: 'TOWER', towerType: type, team: team,
+      x: x, y: y, radius: type === 'KING' ? 22 : 18,
+      hp: hp, maxHp: hp, damage: damage, range: range, cooldown: 0
+    };
+  }
+
+  function spawnCard(card, x, y, team) {
+    playSound(card.type === 'SPELL' ? 'spell' : 'spawn');
+
+    if (card.type === 'SPELL') {
+      entities.forEach(ent => {
+        if (ent.team !== team && Math.hypot(ent.x - x, ent.y - y) <= card.radius + ent.radius) {
+          ent.hp -= card.damage;
+          if (card.stun) ent.stunned = card.stun;
+        }
+      });
+    } else if (card.type === 'BUILDING') {
+      entities.push({
+        id: Math.random(), type: 'BUILDING', cardId: card.id, name: card.name,
+        team: team, x: x, y: y, radius: 16,
+        hp: card.hp, maxHp: card.hp, damage: card.damage, range: card.range,
+        targets: card.targets, color: card.color, icon: card.icon, cooldown: 0
+      });
+    } else {
+      const gap = 16;
+      for (let i = 0; i < card.count; i++) {
+        const offX = (i - (card.count - 1) / 2) * gap;
+        entities.push({
+          id: Math.random(), type: 'TROOP', cardId: card.id, name: card.name,
+          team: team, x: x + offX, y: y, radius: card.id === 'GIANT' || card.id === 'PEKKA' ? 13 : 9,
+          hp: card.hp, maxHp: card.hp, damage: card.damage, speed: card.speed,
+          range: card.range, targets: card.targets, isChamp: !!card.isChamp,
+          isEvo: !!card.isEvo, isFlying: !!card.isFlying, color: card.color, icon: card.icon,
+          cooldown: 0, stunned: 0
+        });
+      }
+    }
+  }
+
+  // --- ACTIVACIÓN DE HABILIDADES DE CAMPEONES ---
+  function useChampionAbility(champ) {
+    if (playerElixir < 1) return;
+    playerElixir -= 1;
+    playSound('ability');
+
+    if (champ.cardId === 'PEKKA') {
+      champ.speed *= 1.6;
+      champ.damage *= 1.4;
+      // Impacto Furia de Área
+      entities.forEach(ent => {
+        if (ent.team === 'BOT' && Math.hypot(ent.x - champ.x, ent.y - champ.y) <= 100) {
+          ent.hp -= 220;
+          ent.stunned = 0.6;
+        }
+      });
+      entities.push({ id: Math.random(), type: 'EFFECT', x: champ.x, y: champ.y - 15, life: 0.5, text: '💥 ¡FURIA!', color: '#a855f7' });
+    } else if (champ.cardId === 'E_WIZARD') {
+      // Sobrecarga Rayos a todas las tropas enemigas
+      entities.forEach(ent => {
+        if (ent.team === 'BOT' && ent.hp > 0) {
+          ent.hp -= 160;
+          ent.stunned = 0.8;
+          entities.push({ id: Math.random(), type: 'EFFECT', x: ent.x, y: ent.y - 10, life: 0.4, text: '⚡', color: '#06b6d4' });
+        }
+      });
+      entities.push({ id: Math.random(), type: 'EFFECT', x: champ.x, y: champ.y - 15, life: 0.5, text: '⚡ ¡SOBRECARGA!', color: '#38bdf8' });
+    }
+  }
+
+  // --- IA DEL BOT ---
+  function updateBot(dt) {
+    botTimer -= dt;
+    if (botTimer <= 0) {
+      botTimer = user.trophies >= 300 ? 2.0 : 2.8;
+      const affordable = ALL_CARDS.filter(c => c.cost <= botElixir && c.type !== 'SPELL');
+      if (affordable.length > 0) {
+        const card = affordable[Math.floor(Math.random() * affordable.length)];
+        botElixir -= card.cost;
+        const sx = Math.random() * (VW - 100) + 50;
+        const sy = Math.random() * 80 + 80;
+        spawnCard(card, sx, sy, 'BOT');
+      }
+    }
+  }
+
+  // --- GAME LOOP ---
+  let lastTime = performance.now();
+  function renderLoop(now = performance.now()) {
+    const dt = Math.min((now - lastTime) / 1000, 0.1);
+    lastTime = now;
+
+    if (mode === 'PLAYING') {
+      updateGame(dt);
+    }
+    drawGameScreen();
+    requestAnimationFrame(renderLoop);
+  }
+
+  function updateGame(dt) {
+    matchTimer -= dt;
+    if (matchTimer <= 0) {
+      checkMatchWinner();
+      return;
+    }
+
+    if (playerElixir < 10) playerElixir = Math.min(10, playerElixir + 0.45 * dt);
+    if (botElixir < 10) botElixir = Math.min(10, botElixir + 0.45 * dt);
+
+    updateBot(dt);
+
+    entities.forEach(ent => {
+      if (ent.hp <= 0 || ent.type === 'EFFECT') return;
+      if (ent.stunned > 0) { ent.stunned -= dt; return; }
+      if (ent.cooldown > 0) ent.cooldown -= dt;
+
+      let targets = entities.filter(e => e.team !== ent.team && e.hp > 0 && e.type !== 'EFFECT');
+      if (ent.targets === 'BUILDINGS') targets = targets.filter(e => e.type === 'TOWER' || e.type === 'BUILDING');
+      if (ent.targets === 'GROUND') targets = targets.filter(e => !e.isFlying);
+
+      let closest = null, minDist = Infinity;
+      targets.forEach(t => {
+        const d = Math.hypot(t.x - ent.x, t.y - ent.y);
+        if (d < minDist) { minDist = d; closest = t; }
+      });
+
+      if (!closest && ent.type === 'TROOP') {
+        const enemyTowers = entities.filter(e => e.team !== ent.team && e.type === 'TOWER' && e.hp > 0);
+        enemyTowers.forEach(t => {
+          const d = Math.hypot(t.x - ent.x, t.y - ent.y);
+          if (d < minDist) { minDist = d; closest = t; }
+        });
+      }
+
+      if (closest) {
+        const attackRange = ent.range + ent.radius + closest.radius;
+        if (minDist <= attackRange) {
+          if (ent.cooldown <= 0) {
+            let dmg = ent.damage;
+            // Habilidad Pasiva Caballero Evo: Reducción 40% de daño
+            if (closest.isEvo && closest.cardId === 'EVO_KNIGHT') dmg *= 0.6;
+
+            closest.hp -= dmg;
+            ent.cooldown = ent.isEvo ? 0.85 : 1.1;
+            if (ent.cardId === 'E_WIZARD') closest.stunned = 0.4;
+            
+            entities.push({
+              id: Math.random(), type: 'EFFECT', x: closest.x, y: closest.y - 10,
+              life: 0.35, text: `-${Math.round(dmg)}`, color: ent.team === 'PLAYER' ? '#60a5fa' : '#f87171'
+            });
+
+            playSound('hit');
+          }
+        } else if (ent.type === 'TROOP') {
+          let tx = closest.x, ty = closest.y;
+          const bridgeL = 80, bridgeR = 280;
+          const isAbove = ent.y < 235;
+          const targetAbove = closest.y < 235;
+
+          if (isAbove !== targetAbove && !ent.isFlying) {
+            tx = Math.abs(ent.x - bridgeL) < Math.abs(ent.x - bridgeR) ? bridgeL : bridgeR;
+            ty = ent.team === 'PLAYER' ? 210 : 290;
+          }
+
+          const angle = Math.atan2(ty - ent.y, tx - ent.x);
+          ent.x += Math.cos(angle) * ent.speed * 42 * dt;
+          ent.y += Math.sin(angle) * ent.speed * 42 * dt;
+        }
+      }
+    });
+
+    for (let i = entities.length - 1; i >= 0; i--) {
+      const e = entities[i];
+      if (e.type === 'EFFECT') {
+        e.life -= dt;
+        e.y -= 15 * dt;
+        if (e.life <= 0) entities.splice(i, 1);
+      } else if (e.hp <= 0) {
+        if (e.towerType === 'KING') {
+          checkMatchWinner();
+          return;
+        }
+        entities.splice(i, 1);
+      }
+    }
+  }
+
+  function checkMatchWinner() {
+    let pTowers = entities.filter(e => e.team === 'PLAYER' && e.type === 'TOWER' && e.hp > 0).length;
+    let bTowers = entities.filter(e => e.team === 'BOT' && e.type === 'TOWER' && e.hp > 0).length;
+
+    let playerWon = false;
+    let bKingHp = (entities.find(e => e.team === 'BOT' && e.towerType === 'KING') || {hp:0}).hp;
+
+    if (bKingHp <= 0 || pTowers > bTowers) {
+      playerWon = true;
+    }
+
+    mode = 'GAMEOVER';
+    if (playerWon) {
+      playSound('win');
+      user.trophies += 30;
+      user.coins += 120;
+      
+      let emptySlot = user.chests.findIndex(c => c === null);
+      let chestMsg = "";
+      if (emptySlot !== -1) {
+        const chestType = Math.random() < 0.35 ? 'Oro' : 'Plata';
+        user.chests[emptySlot] = { type: chestType, ready: true };
+        chestMsg = `¡Ganaste un Cofre de ${chestType}!`;
+      } else {
+        chestMsg = "(Slots de cofres llenos)";
+      }
+
+      matchResult = { title: '¡VICTORIA!', desc: `+30 Copas | +120 Monedas\n${chestMsg}`, color: '#22c55e' };
+    } else {
+      user.trophies = Math.max(0, user.trophies - 20);
+      matchResult = { title: 'DERROTA', desc: '-20 Copas', color: '#ef4444' };
+    }
+    saveData();
+  }
+
+  // --- DIBUJO Y CANVAS RENDER ---
+  function drawGameScreen() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.scale(scale, scale);
+
+    if (mode === 'MENU') {
+      drawMenu();
+    } else if (mode === 'PLAYING') {
+      drawBattleArena();
+    } else if (mode === 'GAMEOVER') {
+      drawBattleArena();
+      drawGameOverOverlay();
+    }
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+    ctx.fillRect(VW - 45, 8, 38, 28);
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px sans-serif';
+    ctx.fillText(soundOn ? '🔊' : '🔇', VW - 34, 27);
+
+    ctx.restore();
+  }
+
+  function drawMenu() {
+    const isArena2 = user.trophies >= 300;
+    ctx.fillStyle = isArena2 ? '#1e1b18' : '#064e3b';
+    ctx.fillRect(0, 0, VW, VH);
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.fillRect(0, 0, VW, 60);
+    
+    ctx.fillStyle = '#f59e0b';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(`🏆 ${user.trophies} Copas`, 15, 25);
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(isArena2 ? 'Arena 2: Foso de Huesos' : 'Arena 1: Estadio Duende', 15, 45);
+
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = '13px sans-serif';
+    ctx.fillText(`🪙 ${user.coins}`, 180, 35);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(`💎 ${user.gems}`, 260, 35);
+
+    if (currentTab === 'BATTLE') {
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.9)';
+      ctx.fillRect(30, 100, VW - 60, 180);
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(30, 100, VW - 60, 180);
+
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(isArena2 ? 'FOSO DE HUESOS' : 'ESTADIO DUENDE', VW / 2, 145);
+      ctx.font = '13px sans-serif';
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText('¡Batalla con Campeones y Evoluciones!', VW / 2, 175);
+
+      ctx.fillStyle = '#f97316';
+      ctx.beginPath();
+      ctx.roundRect(90, 320, 180, 55, 12);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText('¡JUGAR!', VW / 2, 355);
+      ctx.textAlign = 'left';
+
+    } else if (currentTab === 'CHESTS') {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('TUS COFRES', VW / 2, 110);
+      ctx.textAlign = 'left';
+
+      for (let i = 0; i < 4; i++) {
+        const cx = 50 + (i % 2) * 140;
+        const cy = 140 + Math.floor(i / 2) * 150;
+        const ch = user.chests[i];
+
+        ctx.fillStyle = 'rgba(30, 41, 59, 0.9)';
+        ctx.fillRect(cx, cy, 120, 130);
+        ctx.strokeStyle = ch ? '#f59e0b' : '#475569';
+        ctx.strokeRect(cx, cy, 120, 130);
+
+        if (ch) {
+          ctx.font = '40px sans-serif';
+          ctx.fillText(ch.type === 'Oro' ? '👑' : '📦', cx + 40, cy + 55);
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 13px sans-serif';
+          ctx.fillText(`Cofre ${ch.type}`, cx + 25, cy + 90);
+          ctx.fillStyle = '#4ade80';
+          ctx.font = '11px sans-serif';
+          ctx.fillText('¡ABRIR!', cx + 40, cy + 115);
+        } else {
+          ctx.fillStyle = '#64748b';
+          ctx.font = '12px sans-serif';
+          ctx.fillText('Vaciante', cx + 38, cy + 70);
+        }
+      }
+    } else if (currentTab === 'DECK') {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText('Toca cualquier carta para equipar/desequipar:', 20, 95);
+
+      let idx = 0;
+      ALL_CARDS.forEach(c => {
+        const inDeck = user.deck.includes(c.id);
+        const cardX = 25 + (idx % 2) * 160;
+        const cardY = 115 + Math.floor(idx / 2) * 75;
+
+        ctx.fillStyle = inDeck ? '#1e3a8a' : '#1e293b';
+        ctx.fillRect(cardX, cardY, 150, 68);
+        ctx.strokeStyle = c.isChamp ? '#a855f7' : (c.isEvo ? '#eab308' : (inDeck ? '#38bdf8' : '#475569'));
+        ctx.lineWidth = inDeck || c.isChamp ? 2.5 : 1;
+        ctx.strokeRect(cardX, cardY, 150, 68);
+
+        ctx.font = '22px sans-serif';
+        ctx.fillText(c.icon, cardX + 8, cardY + 42);
+
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(c.name, cardX + 42, cardY + 24);
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText(`Elixir: ${c.cost}`, cardX + 42, cardY + 40);
+
+        if (c.isChamp) {
+          ctx.fillStyle = '#c084fc';
+          ctx.fillText('★ CAMPEÓN', cardX + 42, cardY + 56);
+        } else if (c.isEvo) {
+          ctx.fillStyle = '#fde047';
+          ctx.fillText('⚡ EVOLUCIÓN', cardX + 42, cardY + 56);
+        } else if (inDeck) {
+          ctx.fillStyle = '#4ade80';
+          ctx.fillText('✓ EQUIPADA', cardX + 80, cardY + 56);
+        }
+        idx++;
+      });
+    }
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, VH - 60, VW, 60);
+
+    const tabs = [
+      { id: 'DECK', name: 'Mazo', icon: '🃏', x: 0 },
+      { id: 'BATTLE', name: 'Batalla', icon: '⚔️', x: 120 },
+      { id: 'CHESTS', name: 'Cofres', icon: '🎁', x: 240 }
+    ];
+
+    tabs.forEach(t => {
+      const active = currentTab === t.id;
+      ctx.fillStyle = active ? '#38bdf8' : '#64748b';
+      ctx.font = active ? 'bold 14px sans-serif' : '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${t.icon} ${t.name}`, t.x + 60, VH - 25);
+    });
+    ctx.textAlign = 'left';
+  }
+
+  function drawBattleArena() {
+    const isArena2 = user.trophies >= 300;
+    ctx.fillStyle = isArena2 ? '#26201e' : '#15803d';
+    ctx.fillRect(0, 0, VW, 530);
+
+    ctx.fillStyle = '#0284c7';
+    ctx.fillRect(0, 250, VW, 30);
+
+    ctx.fillStyle = '#78350f';
+    ctx.fillRect(65, 245, 30, 40);
+    ctx.fillRect(265, 245, 30, 40);
+
+    entities.forEach(ent => {
+      if (ent.type === 'EFFECT') {
+        ctx.fillStyle = ent.color;
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(ent.text, ent.x - 10, ent.y);
+        return;
+      }
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(ent.x, ent.y, ent.radius, 0, Math.PI * 2);
+
+      if (ent.type === 'TOWER') {
+        ctx.fillStyle = ent.team === 'PLAYER' ? '#2563eb' : '#dc2626';
+        ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+
+        ctx.font = ent.towerType === 'KING' ? '18px sans-serif' : '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(ent.towerType === 'KING' ? '👑' : '🏰', ent.x, ent.y + 5);
+      } else {
+        ctx.fillStyle = ent.color || (ent.team === 'PLAYER' ? '#3b82f6' : '#ef4444');
+        ctx.fill();
+        ctx.strokeStyle = ent.team === 'PLAYER' ? '#60a5fa' : '#f87171';
+        ctx.lineWidth = 1.5; ctx.stroke();
+
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(ent.icon || '⚔️', ent.x, ent.y + 4);
+      }
+      ctx.restore();
+
+      const hpPct = Math.max(0, ent.hp / ent.maxHp);
+      const bw = ent.radius * 2;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(ent.x - ent.radius, ent.y - ent.radius - 8, bw, 4);
+      ctx.fillStyle = ent.team === 'PLAYER' ? '#4ade80' : '#f87171';
+      ctx.fillRect(ent.x - ent.radius, ent.y - ent.radius - 8, bw * hpPct, 4);
+    });
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 530, VW, 110);
+
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(15, 536, VW - 30, 8);
+    ctx.fillStyle = '#d946ef';
+    ctx.fillRect(15, 536, (VW - 30) * (playerElixir / 10), 8);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.fillText(`ELIXIR: ${Math.floor(playerElixir)}/10`, 15, 532);
+
+    const handCards = user.deck.map(id => ALL_CARDS.find(c => c.id === id));
+    const slotW = VW / Math.max(1, handCards.length);
+
+    handCards.forEach((c, idx) => {
+      const cx = idx * slotW + 6;
+      const cy = 550;
+      const cw = slotW - 12;
+      const isSelected = selectedCardId === c.id;
+      const canAfford = playerElixir >= c.cost;
+
+      ctx.fillStyle = isSelected ? '#1e40af' : (canAfford ? '#1e293b' : '#0f172a');
+      ctx.fillRect(cx, cy, cw, 75);
+      ctx.strokeStyle = isSelected ? '#38bdf8' : (canAfford ? '#475569' : '#1e293b');
+      ctx.lineWidth = isSelected ? 3 : 1;
+      ctx.strokeRect(cx, cy, cw, 75);
+
+      ctx.font = '20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(c.icon, cx + cw / 2, cy + 30);
+
+      ctx.fillStyle = canAfford ? '#fff' : '#64748b';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillText(c.name, cx + cw / 2, cy + 50);
+
+      ctx.fillStyle = '#d946ef';
+      ctx.beginPath();
+      ctx.arc(cx + 12, cy + 12, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillText(c.cost, cx + 12, cy + 15);
+    });
+
+    // Botón Habilidad Campeón Vivo en Campo
+    const champ = entities.find(e => e.team === 'PLAYER' && e.isChamp && e.hp > 0);
+    if (champ) {
+      const card = ALL_CARDS.find(c => c.id === champ.cardId);
+      ctx.fillStyle = '#a855f7';
+      ctx.fillRect(VW - 105, 455, 95, 38);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+      ctx.strokeRect(VW - 105, 455, 95, 38);
+
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('⚡ ' + (card.abilityName || 'HABILIDAD'), VW - 57, 478);
+    }
+
+    const mins = Math.floor(matchTimer / 60);
+    const secs = Math.floor(matchTimer % 60).toString().padStart(2, '0');
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+    ctx.fillRect(VW / 2 - 35, 10, 70, 24);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${mins}:${secs}`, VW / 2, 26);
+    ctx.textAlign = 'left';
+  }
+
+  function drawGameOverOverlay() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.fillRect(0, 0, VW, VH);
+
+    ctx.fillStyle = 'rgba(30, 41, 59, 0.95)';
+    ctx.fillRect(50, 200, VW - 100, 220);
+    ctx.strokeStyle = matchResult.color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(50, 200, VW - 100, 220);
+
+    ctx.fillStyle = matchResult.color;
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(matchResult.title, VW / 2, 245);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '13px sans-serif';
+    const lines = matchResult.desc.split('\n');
+    lines.forEach((l, idx) => {
+      ctx.fillText(l, VW / 2, 285 + idx * 22);
+    });
+
+    ctx.fillStyle = '#3b82f6';
+    ctx.fillRect(110, 360, 140, 40);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('CONTINUAR', VW / 2, 385);
+    ctx.textAlign = 'left';
+  }
+</script>
+</body>
+</html>
